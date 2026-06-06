@@ -1,0 +1,67 @@
+{
+    "displayName": "Ford Control",
+    "uuid": "8bb28aff-150d-472e-bda2-06ed2c582dfe",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+        "emery",
+        "gabbro"
+    ],
+    "watchapp": {
+        "watchface": false
+    },
+    "capabilities": [],
+    "messageKeys": {
+        "KEY_ACTION": 10000,
+        "KEY_RESPONSE": 10001,
+        "KEY_IS_LOCKED": 10002,
+        "KEY_IS_RUNNING": 10003,
+        "KEY_FUEL_LEVEL": 10004,
+        "KEY_OIL_LIFE": 10005,
+        "KEY_TIRE_FL": 10006,
+        "KEY_TIRE_FR": 10007,
+        "KEY_TIRE_RL": 10008,
+        "KEY_TIRE_RR": 10009,
+        "KEY_MODEL_NAME": 10010,
+        "KEY_ERROR_MSG": 10011,
+        "KEY_CLIMATE_TEMP": 10012,
+        "KEY_CLIMATE_SEAT": 10013,
+        "KEY_CLIMATE_WHEEL": 10014,
+        "KEY_CLIMATE_DEFROST": 10015,
+        "KEY_APPLY_CLIMATE": 10016
+    },
+    "resources": {
+        "media": [
+            {
+                "type": "png",
+                "name": "IMAGE_MENU_ICON",
+                "file": "images/menu_icon.png",
+                "menuIcon": true
+            }
+        ]
+    },
+    "name": "pebble-ford-control",
+    "shortName": "Ford Control",
+    "longName": "Ford Control",
+    "versionLabel": "1.0.0",
+    "companyName": "Brooman Inks",
+    "appKeys": {
+        "KEY_ACTION": 10000,
+        "KEY_RESPONSE": 10001,
+        "KEY_IS_LOCKED": 10002,
+        "KEY_IS_RUNNING": 10003,
+        "KEY_FUEL_LEVEL": 10004,
+        "KEY_OIL_LIFE": 10005,
+        "KEY_TIRE_FL": 10006,
+        "KEY_TIRE_FR": 10007,
+        "KEY_TIRE_RL": 10008,
+        "KEY_TIRE_RR": 10009,
+        "KEY_MODEL_NAME": 10010,
+        "KEY_ERROR_MSG": 10011,
+        "KEY_CLIMATE_TEMP": 10012,
+        "KEY_CLIMATE_SEAT": 10013,
+        "KEY_CLIMATE_WHEEL": 10014,
+        "KEY_CLIMATE_DEFROST": 10015,
+        "KEY_APPLY_CLIMATE": 10016
+    }
+}
