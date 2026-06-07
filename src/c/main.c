@@ -18,6 +18,7 @@
 #define KEY_CLIMATE_WHEEL  14
 #define KEY_CLIMATE_DEFROST 15
 #define KEY_APPLY_CLIMATE  16
+#define KEY_DOOR_STATUS    17
 
 // ── Actions ──────────────────────────────────────────────────────────────────
 #define ACTION_LOCK        0
@@ -73,6 +74,7 @@ static int   s_tire_fl = -1;
 static int   s_tire_fr = -1;
 static int   s_tire_rl = -1;
 static int   s_tire_rr = -1;
+static uint8_t s_door_status = 0xFF; // 0xFF = unknown; bits 0-3 = FL,FR,RL,RR open
 
 // Hold state
 static int         s_held_btn      = BTN_NONE;
@@ -92,10 +94,16 @@ static Layer  *s_info_layer;
 // ── Forward declarations ──────────────────────────────────────────────────────
 static void send_action(int action);
 static void send_climate();
+static void send_action(int action);
 static void main_layer_update(Layer *layer, GContext *ctx);
 static void climate_layer_update(Layer *layer, GContext *ctx);
 static void info_layer_update(Layer *layer, GContext *ctx);
 static void hold_cancel();
+
+static void open_info_window(void) {
+    send_action(ACTION_GET_INFO);
+    window_stack_push(s_info_window, true);
+}
 
 // ── Layout helpers ────────────────────────────────────────────────────────────
 static GRect btn_lock_rect(GRect bounds) {
@@ -105,15 +113,16 @@ static GRect btn_start_rect(GRect bounds) {
     return GRect(bounds.size.w / 2, bounds.size.h - 68, bounds.size.w / 2, 68);
 }
 static GRect btn_climate_rect(GRect bounds) {
-    int mid_y = 40 + (bounds.size.h - 68 - 40) / 2 - 24;
+    int mid_y = bounds.size.h - 68 - 48 - 8;
     return GRect(6, mid_y, bounds.size.w / 2 - 9, 48);
 }
 static GRect btn_find_rect(GRect bounds) {
-    int mid_y = 40 + (bounds.size.h - 68 - 40) / 2 - 24;
+    int mid_y = bounds.size.h - 68 - 48 - 8;
     return GRect(bounds.size.w / 2 + 3, mid_y, bounds.size.w / 2 - 9, 48);
 }
 static GRect status_rect(GRect bounds) {
-    return GRect(0, 24, bounds.size.w, 22);
+    int top_btn_y = bounds.size.h - 68 - 48 - 8;
+    return GRect(0, 24, bounds.size.w, top_btn_y - 24);
 }
 
 // ── AppMessage ────────────────────────────────────────────────────────────────
@@ -146,6 +155,9 @@ static void inbox_received(DictionaryIterator *it, void *ctx) {
 
     t = dict_find(it, KEY_TIRE_RR);
     if (t) s_tire_rr = (int)t->value->int32;
+
+    t = dict_find(it, KEY_DOOR_STATUS);
+    if (t) s_door_status = (uint8_t)t->value->uint8;
 
     t = dict_find(it, KEY_CLIMATE_TEMP);
     if (t) s_climate_temp = (int)t->value->int32;
@@ -261,25 +273,34 @@ static bool rect_contains(GRect r, int x, int y) {
            y >= r.origin.y && y < r.origin.y + r.size.h;
 }
 
+static int s_swipe_start_y = -1;
+
 static void touch_handler(const TouchEvent *event, void *ctx) {
     GRect bounds = layer_get_bounds(window_get_root_layer(s_main_window));
     int x = event->x, y = event->y;
 
     if (event->type == TouchEvent_Touchdown) {
+        s_swipe_start_y = y;
         if (rect_contains(btn_lock_rect(bounds), x, y))
             hold_start(BTN_LOCK_UNLOCK);
         else if (rect_contains(btn_start_rect(bounds), x, y))
             hold_start(BTN_START_STOP);
-        else if (rect_contains(btn_climate_rect(bounds), x, y) && s_is_running)
-            hold_start(BTN_CLIMATE);
+        else if (rect_contains(btn_climate_rect(bounds), x, y))
+            window_stack_push(s_climate_window, true);
         else if (rect_contains(btn_find_rect(bounds), x, y))
-            hold_start(BTN_FIND);
-        else if (rect_contains(status_rect(bounds), x, y)) {
-            send_action(ACTION_GET_INFO);
-            window_stack_push(s_info_window, true);
-        }
+            open_info_window();
     } else if (event->type == TouchEvent_Liftoff) {
-        hold_cancel();
+        int delta = y - s_swipe_start_y;
+        if (delta < -40) {
+            hold_cancel();
+            open_info_window();
+        } else if (delta > 40) {
+            hold_cancel();
+            window_stack_push(s_climate_window, true);
+        } else {
+            hold_cancel();
+        }
+        s_swipe_start_y = -1;
     }
 }
 
@@ -290,14 +311,14 @@ static void climate_touch_handler(const TouchEvent *event, void *ctx) {
     int w = bounds.size.w;
 
     // Temperature +/- buttons
-    GRect minus_rect = GRect(w/2 - 70, 60, 44, 36);
-    GRect plus_rect  = GRect(w/2 + 26, 60, 44, 36);
+    GRect minus_rect = GRect(w/2 - 70, 34, 44, 30);
+    GRect plus_rect  = GRect(w/2 + 26, 34, 44, 30);
     // Toggles
-    GRect seat_rect    = GRect(0, 112, w, 32);
-    GRect wheel_rect   = GRect(0, 148, w, 32);
-    GRect defrost_rect = GRect(0, 184, w, 32);
+    GRect seat_rect    = GRect(0,  78, w, 36);
+    GRect wheel_rect   = GRect(0, 118, w, 36);
+    GRect defrost_rect = GRect(0, 158, w, 36);
     // Apply
-    GRect apply_rect = GRect(w/2 - 55, bounds.size.h - 52, 110, 36);
+    GRect apply_rect = GRect(w/2 - 55, 198, 110, 26);
 
     if (rect_contains(minus_rect, x, y) && s_climate_temp > 60)
         s_climate_temp--;
@@ -320,15 +341,23 @@ static void climate_touch_handler(const TouchEvent *event, void *ctx) {
 #endif
 
 // ── Button (physical) handlers ────────────────────────────────────────────────
+static AppTimer *s_backlight_timer = NULL;
+
+static void backlight_off_callback(void *ctx) {
+    s_backlight_timer = NULL;
+    light_enable(false);
+}
+
 static void up_click(ClickRecognizerRef r, void *ctx) {
-    // Navigate focus between buttons — toggle lock/unlock
-    send_action(s_is_locked ? ACTION_UNLOCK : ACTION_LOCK);
+    open_info_window();
 }
 static void down_click(ClickRecognizerRef r, void *ctx) {
-    send_action(s_is_running ? ACTION_STOP : ACTION_START);
+    window_stack_push(s_climate_window, true);
 }
 static void select_click(ClickRecognizerRef r, void *ctx) {
-    if (s_is_running) window_stack_push(s_climate_window, true);
+    if (s_backlight_timer) app_timer_cancel(s_backlight_timer);
+    light_enable(true);
+    s_backlight_timer = app_timer_register(5000, backlight_off_callback, NULL);
 }
 
 static void click_config(void *ctx) {
@@ -339,16 +368,15 @@ static void click_config(void *ctx) {
 
 // Climate window buttons
 static void climate_up_click(ClickRecognizerRef r, void *ctx) {
-    if (s_climate_temp < 85) s_climate_temp++;
-    if (s_climate_layer) layer_mark_dirty(s_climate_layer);
+    open_info_window();
 }
 static void climate_down_click(ClickRecognizerRef r, void *ctx) {
-    if (s_climate_temp > 60) s_climate_temp--;
-    if (s_climate_layer) layer_mark_dirty(s_climate_layer);
+    window_stack_pop(true);
 }
 static void climate_select_click(ClickRecognizerRef r, void *ctx) {
-    send_climate();
-    window_stack_pop(true);
+    if (s_backlight_timer) app_timer_cancel(s_backlight_timer);
+    light_enable(true);
+    s_backlight_timer = app_timer_register(5000, backlight_off_callback, NULL);
 }
 static void climate_click_config(void *ctx) {
     window_single_click_subscribe(BUTTON_ID_UP,     climate_up_click);
@@ -363,36 +391,35 @@ static void draw_rounded_btn(GContext *ctx, GRect r, GColor bg, GColor fg,
     graphics_fill_rect(ctx, r, 6, GCornersAll);
     graphics_context_set_text_color(ctx, fg);
     graphics_draw_text(ctx, label, font,
-                       GRect(r.origin.x, r.origin.y + r.size.h/2 - 10,
-                             r.size.w, 22),
+                       GRect(r.origin.x, r.origin.y + r.size.h/2 - 20,
+                             r.size.w, 32),
                        GTextOverflowModeTrailingEllipsis,
                        GTextAlignmentCenter, NULL);
 }
 
-static void draw_progress_arc(GContext *ctx, GRect btn_rect, int progress_steps) {
-    // Draw a thick white arc around the button showing hold progress
-    GPoint center = GPoint(btn_rect.origin.x + btn_rect.size.w / 2,
-                           btn_rect.origin.y + btn_rect.size.h / 2);
-    int radius = (btn_rect.size.w < btn_rect.size.h ?
-                  btn_rect.size.w : btn_rect.size.h) / 2 + 4;
-    int32_t angle = (TRIG_MAX_ANGLE * progress_steps) / PROGRESS_STEPS;
-
-    graphics_context_set_stroke_color(ctx, GColorWhite);
-    graphics_context_set_stroke_width(ctx, 3);
-    graphics_draw_arc(ctx,
-                      GRect(center.x - radius, center.y - radius,
-                            radius * 2, radius * 2),
-                      GOvalScaleModeFitCircle,
-                      DEG_TO_TRIGANGLE(0) - TRIG_MAX_ANGLE / 4,
-                      DEG_TO_TRIGANGLE(0) - TRIG_MAX_ANGLE / 4 + angle);
+static void draw_sweep_btn(GContext *ctx, GRect r, GColor color_from, GColor color_to,
+                           GColor fg, const char *label, GFont font, int progress) {
+    // Base button in current color
+    graphics_context_set_fill_color(ctx, color_from);
+    graphics_fill_rect(ctx, r, 6, GCornersAll);
+    // Sweep target color from left
+    int sweep_w = (r.size.w * progress) / PROGRESS_STEPS;
+    if (sweep_w > 0) {
+        graphics_context_set_fill_color(ctx, color_to);
+        graphics_fill_rect(ctx, GRect(r.origin.x, r.origin.y, sweep_w, r.size.h), 0, GCornerNone);
+    }
+    // Label on top
+    graphics_context_set_text_color(ctx, fg);
+    graphics_draw_text(ctx, label, font,
+                       GRect(r.origin.x, r.origin.y + r.size.h / 2 - 20, r.size.w, 32),
+                       GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
 }
 
 // ── Main layer ────────────────────────────────────────────────────────────────
 static void main_layer_update(Layer *layer, GContext *ctx) {
     GRect bounds = layer_get_bounds(layer);
-    GFont font_sm  = fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD);
-    GFont font_med = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
     GFont font_lg  = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+    GFont font_btn = fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD);
 
     // Background
     graphics_context_set_fill_color(ctx, FORD_BLUE);
@@ -405,22 +432,22 @@ static void main_layer_update(Layer *layer, GContext *ctx) {
                        GTextOverflowModeTrailingEllipsis,
                        GTextAlignmentCenter, NULL);
 
-    // Status line (dark bg, tap for info)
+    // Status text — centered between model name and top buttons, no background
     GRect st = status_rect(bounds);
-    graphics_context_set_fill_color(ctx, GColorDarkGray);
-    graphics_fill_rect(ctx, st, 0, GCornerNone);
-
     char status_str[48];
     const char *lock_str  = s_is_locked  ? "Locked"  : "Unlocked";
     const char *eng_str   = s_is_running ? "Running" : "Off";
-    snprintf(status_str, sizeof(status_str), "%s  ·  %s", lock_str, eng_str);
+    snprintf(status_str, sizeof(status_str), "%s · %s", lock_str, eng_str);
 
     if (s_is_loading) snprintf(status_str, sizeof(status_str), "Loading...");
     if (s_error[0])   snprintf(status_str, sizeof(status_str), "Error");
 
+    GFont font_xl = fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD);
+    int status_text_h = 36;
+    int status_y = st.origin.y + (st.size.h - status_text_h) / 2;
     graphics_context_set_text_color(ctx, TXT_LIGHT);
-    graphics_draw_text(ctx, status_str, font_sm,
-                       GRect(0, st.origin.y + 4, bounds.size.w, 16),
+    graphics_draw_text(ctx, status_str, font_xl,
+                       GRect(0, status_y, bounds.size.w, status_text_h),
                        GTextOverflowModeTrailingEllipsis,
                        GTextAlignmentCenter, NULL);
 
@@ -431,38 +458,45 @@ static void main_layer_update(Layer *layer, GContext *ctx) {
 
     draw_rounded_btn(ctx, climate_r,
                      climate_active ? GColorDukeBlue : GColorDarkGray,
-                     TXT_LIGHT, "Climate", font_sm);
-    draw_rounded_btn(ctx, find_r, GColorDarkGray, TXT_LIGHT, "Find", font_sm);
+                     TXT_LIGHT, "Climate", font_btn);
+    draw_rounded_btn(ctx, find_r, GColorDarkGray, TXT_LIGHT, "Find", font_btn);
 
     // ── Bottom buttons ─────────────────────────────────────────────────────
     GRect lock_r  = btn_lock_rect(bounds);
     GRect start_r = btn_start_rect(bounds);
 
-    // Lock/Unlock
-    GColor lock_color = s_is_locked ? BTN_AMBER : GColorDarkGray;
-    draw_rounded_btn(ctx, GRect(lock_r.origin.x + 3, lock_r.origin.y + 4,
-                                lock_r.size.w - 6, lock_r.size.h - 8),
-                     lock_color, TXT_DARK,
-                     s_is_locked ? "Unlock" : "Lock", font_med);
+    // Lock/Unlock — sweep from current color to target color on hold
+    GColor lock_from = s_is_locked ? GColorIslamicGreen : GColorRed;
+    GColor lock_to   = s_is_locked ? GColorRed : GColorIslamicGreen;
+    int lock_prog    = (s_held_btn == BTN_LOCK_UNLOCK) ? s_hold_progress : 0;
+    GRect lock_inner = GRect(lock_r.origin.x + 3, lock_r.origin.y + 4,
+                             lock_r.size.w - 6, lock_r.size.h - 8);
+    draw_sweep_btn(ctx, lock_inner, lock_from, lock_to, TXT_LIGHT,
+                   s_is_locked ? "Unlock" : "Lock", font_btn, lock_prog);
 
-    // Start/Stop
-    GColor start_color = s_is_running ? BTN_RED : BTN_GREEN;
-    draw_rounded_btn(ctx, GRect(start_r.origin.x + 3, start_r.origin.y + 4,
-                                start_r.size.w - 6, start_r.size.h - 8),
-                     start_color, TXT_LIGHT,
-                     s_is_running ? "Stop" : "Start", font_med);
+    // Start/Stop — sweep from current color to target color on hold
+    GColor start_from = s_is_running ? BTN_RED   : BTN_GREEN;
+    GColor start_to   = s_is_running ? BTN_GREEN : BTN_RED;
+    int start_prog    = (s_held_btn == BTN_START_STOP) ? s_hold_progress : 0;
+    GRect start_inner = GRect(start_r.origin.x + 3, start_r.origin.y + 4,
+                              start_r.size.w - 6, start_r.size.h - 8);
+    draw_sweep_btn(ctx, start_inner, start_from, start_to, TXT_LIGHT,
+                   s_is_running ? "Stop" : "Start", font_btn, start_prog);
 
-    // Progress arc on held button
-    if (s_held_btn != BTN_NONE && s_hold_progress > 0) {
-        GRect held_r;
-        switch (s_held_btn) {
-            case BTN_LOCK_UNLOCK: held_r = lock_r;    break;
-            case BTN_START_STOP:  held_r = start_r;   break;
-            case BTN_CLIMATE:     held_r = climate_r; break;
-            case BTN_FIND:        held_r = find_r;    break;
-            default: held_r = GRect(0,0,0,0); break;
-        }
-        draw_progress_arc(ctx, held_r, s_hold_progress);
+    // Arc for climate and find buttons
+    if ((s_held_btn == BTN_CLIMATE || s_held_btn == BTN_FIND) && s_hold_progress > 0) {
+        GRect held_r = (s_held_btn == BTN_CLIMATE) ? climate_r : find_r;
+        graphics_context_set_stroke_color(ctx, GColorWhite);
+        graphics_context_set_stroke_width(ctx, 4);
+        int32_t angle = (TRIG_MAX_ANGLE * s_hold_progress) / PROGRESS_STEPS;
+        GPoint center = GPoint(held_r.origin.x + held_r.size.w / 2,
+                               held_r.origin.y + held_r.size.h / 2);
+        int radius = (held_r.size.w < held_r.size.h ? held_r.size.w : held_r.size.h) / 2 + 4;
+        graphics_draw_arc(ctx,
+                          GRect(center.x - radius, center.y - radius, radius * 2, radius * 2),
+                          GOvalScaleModeFitCircle,
+                          DEG_TO_TRIGANGLE(0) - TRIG_MAX_ANGLE / 4,
+                          DEG_TO_TRIGANGLE(0) - TRIG_MAX_ANGLE / 4 + angle);
     }
 }
 
@@ -482,7 +516,7 @@ static void climate_layer_update(Layer *layer, GContext *ctx) {
     // Title
     graphics_context_set_text_color(ctx, TXT_LIGHT);
     graphics_draw_text(ctx, "Climate", font_lg,
-                       GRect(0, 4, w, 26),
+                       GRect(0, 2, w, 26),
                        GTextOverflowModeTrailingEllipsis,
                        GTextAlignmentCenter, NULL);
 
@@ -490,60 +524,55 @@ static void climate_layer_update(Layer *layer, GContext *ctx) {
     char temp_str[8];
     snprintf(temp_str, sizeof(temp_str), "%d\xc2\xb0" "F", s_climate_temp);
 
-    // Minus button
-    draw_rounded_btn(ctx, GRect(w/2 - 70, 60, 44, 36),
-                     GColorDarkGray, TXT_LIGHT, "-", font_lg);
+    // Minus button (blue)
+    draw_rounded_btn(ctx, GRect(w/2 - 70, 34, 44, 30),
+                     GColorVividCerulean, TXT_LIGHT, "-", font_lg);
     // Temp display
     graphics_context_set_text_color(ctx, TXT_LIGHT);
     graphics_draw_text(ctx, temp_str, font_lg,
-                       GRect(w/2 - 22, 64, 44, 28),
+                       GRect(w/2 - 22, 34 + 30/2 - 14, 44, 28),
                        GTextOverflowModeTrailingEllipsis,
                        GTextAlignmentCenter, NULL);
-    // Plus button
-    draw_rounded_btn(ctx, GRect(w/2 + 26, 60, 44, 36),
-                     GColorDarkGray, TXT_LIGHT, "+", font_lg);
+    // Plus button (red)
+    draw_rounded_btn(ctx, GRect(w/2 + 26, 34, 44, 30),
+                     GColorRed, TXT_LIGHT, "+", font_lg);
 
     // Separator
     graphics_context_set_stroke_color(ctx, GColorDarkGray);
     graphics_context_set_stroke_width(ctx, 1);
-    graphics_draw_line(ctx, GPoint(10, 105), GPoint(w - 10, 105));
+    graphics_draw_line(ctx, GPoint(10, 72), GPoint(w - 10, 72));
 
     // Toggle rows
     struct { const char *label; bool *val; int y; } toggles[] = {
-        { "Seat Heat",      &s_climate_seat,    112 },
-        { "Wheel Heat",     &s_climate_wheel,   148 },
-        { "Front Defrost",  &s_climate_defrost, 184 },
+        { "Seat",    &s_climate_seat,    78  },
+        { "Wheel",   &s_climate_wheel,   118 },
+        { "Defrost", &s_climate_defrost, 158 },
     };
 
     for (int i = 0; i < 3; i++) {
         bool on = *toggles[i].val;
+        int row_h = 32;
+        // Label
         graphics_context_set_text_color(ctx, TXT_LIGHT);
-        graphics_draw_text(ctx, toggles[i].label, font_med,
-                           GRect(12, toggles[i].y + 6, w - 80, 22),
+        graphics_draw_text(ctx, toggles[i].label, font_lg,
+                           GRect(12, toggles[i].y + row_h/2 - 14, w - 80, 28),
                            GTextOverflowModeTrailingEllipsis,
                            GTextAlignmentLeft, NULL);
         // Toggle pill
-        GRect pill = GRect(w - 56, toggles[i].y + 6, 48, 22);
+        GRect pill = GRect(w - 60, toggles[i].y + 2, 52, 28);
         graphics_context_set_fill_color(ctx, on ? BTN_GREEN : GColorDarkGray);
         graphics_fill_rect(ctx, pill, 8, GCornersAll);
         graphics_context_set_text_color(ctx, TXT_LIGHT);
-        graphics_draw_text(ctx, on ? "ON" : "OFF", font_sm,
-                           GRect(pill.origin.x, pill.origin.y + 4, pill.size.w, 16),
+        graphics_draw_text(ctx, on ? "ON" : "OFF", font_med,
+                           GRect(pill.origin.x, pill.origin.y + pill.size.h/2 - 11, pill.size.w, 22),
                            GTextOverflowModeTrailingEllipsis,
                            GTextAlignmentCenter, NULL);
     }
 
     // Apply button
     draw_rounded_btn(ctx,
-                     GRect(w/2 - 55, bounds.size.h - 52, 110, 36),
-                     BTN_GREEN, TXT_LIGHT, "Apply", font_med);
-
-    // Hint
-    graphics_context_set_text_color(ctx, GColorLightGray);
-    graphics_draw_text(ctx, "Back to cancel", font_sm,
-                       GRect(0, bounds.size.h - 14, w, 14),
-                       GTextOverflowModeTrailingEllipsis,
-                       GTextAlignmentCenter, NULL);
+                     GRect(w/2 - 55, 198, 110, 26),
+                     BTN_GREEN, TXT_LIGHT, "Apply", font_lg);
 }
 
 // ── Info layer ────────────────────────────────────────────────────────────────
@@ -558,85 +587,145 @@ static void draw_bar(GContext *ctx, int x, int y, int w, int h,
     }
 }
 
+static void draw_maverick_overhead(GContext *ctx, int cx, int cy) {
+    GColor body  = GColorDarkGray;
+    GColor glass = GColorCadetBlue;
+    GColor dark  = GColorBlack;
+
+    // Wheels drawn first — body will overlay the inner wheel arch portion
+    GPoint wheels[4] = {
+        GPoint(cx-24, cy-27),  // FR (top-left on screen)
+        GPoint(cx+24, cy-27),  // FL (top-right on screen)
+        GPoint(cx-24, cy+20),  // RR (bottom-left on screen)
+        GPoint(cx+24, cy+20),  // RL (bottom-right on screen)
+    };
+    for (int i = 0; i < 4; i++) {
+        graphics_context_set_fill_color(ctx, GColorBlack);
+        graphics_fill_circle(ctx, wheels[i], 6);
+        graphics_context_set_fill_color(ctx, GColorLightGray);
+        graphics_fill_circle(ctx, wheels[i], 2);
+    }
+
+    // Front bumper (narrow)
+    graphics_context_set_fill_color(ctx, body);
+    graphics_fill_rect(ctx, GRect(cx-12, cy-40, 24, 4), 2, GCornersAll);
+
+    // Hood (widens toward cab)
+    graphics_fill_rect(ctx, GRect(cx-17, cy-36, 34, 14), 2, GCornersTop);
+
+    // Windshield (glass)
+    graphics_context_set_fill_color(ctx, glass);
+    graphics_fill_rect(ctx, GRect(cx-19, cy-22, 38, 9), 0, GCornerNone);
+
+    // Cab body sides
+    graphics_context_set_fill_color(ctx, body);
+    graphics_fill_rect(ctx, GRect(cx-20, cy-22, 40, 28), 0, GCornerNone);
+
+    // Front seat row (dark interior)
+    graphics_context_set_fill_color(ctx, dark);
+    graphics_fill_rect(ctx, GRect(cx-15, cy-20, 30, 8), 0, GCornerNone);
+
+    // B-pillar (body color bar between seat rows)
+    graphics_context_set_fill_color(ctx, body);
+    graphics_fill_rect(ctx, GRect(cx-20, cy-12, 40, 3), 0, GCornerNone);
+
+    // Rear seat row (dark interior)
+    graphics_context_set_fill_color(ctx, dark);
+    graphics_fill_rect(ctx, GRect(cx-15, cy-9, 30, 7), 0, GCornerNone);
+
+    // Rear window (glass)
+    graphics_context_set_fill_color(ctx, glass);
+    graphics_fill_rect(ctx, GRect(cx-19, cy-2, 38, 6), 0, GCornerNone);
+
+    // Bed side walls
+    graphics_context_set_fill_color(ctx, body);
+    graphics_fill_rect(ctx, GRect(cx-20, cy+4, 6, 26), 0, GCornerNone);
+    graphics_fill_rect(ctx, GRect(cx+14, cy+4, 6, 26), 0, GCornerNone);
+
+    // Tailgate
+    graphics_fill_rect(ctx, GRect(cx-20, cy+30, 40, 5), 0, GCornerNone);
+
+    // Rear bumper (narrow)
+    graphics_fill_rect(ctx, GRect(cx-12, cy+35, 24, 4), 2, GCornersAll);
+}
+
+static void draw_corner_info(GContext *ctx, int x, int y, int bw,
+                              const char *label, int tire_psi,
+                              bool door_open, bool unknown,
+                              GTextAlignment txt_align,
+                              GFont font_label, GFont font_data) {
+    char buf[16];
+    int pill_w = 50;
+    int pill_x = (txt_align == GTextAlignmentRight) ? x + bw - pill_w : x;
+
+    graphics_context_set_text_color(ctx, TXT_LIGHT);
+    graphics_draw_text(ctx, label, font_label,
+                       GRect(x, y + 2, bw, 20),
+                       GTextOverflowModeTrailingEllipsis, txt_align, NULL);
+
+    if (tire_psi >= 0) snprintf(buf, sizeof(buf), "%d psi", tire_psi);
+    else snprintf(buf, sizeof(buf), "-- psi");
+    graphics_draw_text(ctx, buf, font_data,
+                       GRect(x, y + 24, bw, 16),
+                       GTextOverflowModeTrailingEllipsis, txt_align, NULL);
+
+    GColor dc = unknown ? GColorDarkGray : (door_open ? GColorRed : BTN_GREEN);
+    const char *ds = unknown ? "?" : (door_open ? "OPEN" : "OK");
+    GRect pill = GRect(pill_x, y + 43, pill_w, 18);
+    graphics_context_set_fill_color(ctx, dc);
+    graphics_fill_rect(ctx, pill, 4, GCornersAll);
+    graphics_context_set_text_color(ctx, TXT_LIGHT);
+    graphics_draw_text(ctx, ds, font_data,
+                       GRect(pill.origin.x, pill.origin.y + 1, pill.size.w, 14),
+                       GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+}
+
 static void info_layer_update(Layer *layer, GContext *ctx) {
     GRect bounds = layer_get_bounds(layer);
     GFont font_sm  = fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD);
     GFont font_med = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
-    GFont font_lg  = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
     int w = bounds.size.w;
+    int h = bounds.size.h;
 
     graphics_context_set_fill_color(ctx, FORD_BLUE);
     graphics_fill_rect(ctx, bounds, 0, GCornerNone);
 
-    graphics_context_set_text_color(ctx, TXT_LIGHT);
-    graphics_draw_text(ctx, "Vehicle Info", font_lg,
-                       GRect(0, 4, w, 26),
-                       GTextOverflowModeTrailingEllipsis,
-                       GTextAlignmentCenter, NULL);
-
     if (s_is_loading) {
+        graphics_context_set_text_color(ctx, TXT_LIGHT);
         graphics_draw_text(ctx, "Loading...", font_med,
-                           GRect(0, bounds.size.h/2 - 12, w, 24),
+                           GRect(0, h/2 - 12, w, 24),
                            GTextOverflowModeTrailingEllipsis,
                            GTextAlignmentCenter, NULL);
         return;
     }
 
-    char buf[32];
-    int y = 36;
+    bool unknown = (s_door_status == 0xFF);
+    bool door_fl = !unknown && (s_door_status & (1 << 0));
+    bool door_fr = !unknown && (s_door_status & (1 << 1));
+    bool door_rl = !unknown && (s_door_status & (1 << 2));
+    bool door_rr = !unknown && (s_door_status & (1 << 3));
 
-    // Fuel
-    if (s_fuel >= 0) {
-        snprintf(buf, sizeof(buf), "Fuel:  %d%%", s_fuel);
-        graphics_context_set_text_color(ctx, TXT_LIGHT);
-        graphics_draw_text(ctx, buf, font_sm, GRect(10, y, w - 20, 16),
-                           GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-        y += 16;
-        draw_bar(ctx, 10, y, w - 20, 8, s_fuel,
-                 s_fuel > 25 ? BTN_GREEN : BTN_RED);
-        y += 14;
-    }
-    // Oil
-    if (s_oil >= 0) {
-        snprintf(buf, sizeof(buf), "Oil:   %d%%", s_oil);
-        graphics_draw_text(ctx, buf, font_sm, GRect(10, y, w - 20, 16),
-                           GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-        y += 16;
-        draw_bar(ctx, 10, y, w - 20, 8, s_oil,
-                 s_oil > 30 ? BTN_GREEN : BTN_AMBER);
-        y += 14;
-    }
+    int cx = w / 2;    // 100
+    int cy = h / 2;    // 114
+    int bw = 62;       // corner box width
+    int bh = 64;       // corner box height
 
-    // Tire pressures
-    if (s_tire_fl >= 0) {
-        graphics_context_set_stroke_color(ctx, GColorDarkGray);
-        graphics_context_set_stroke_width(ctx, 1);
-        graphics_draw_line(ctx, GPoint(10, y + 2), GPoint(w - 10, y + 2));
-        y += 8;
+    // Corner info: top-left=FR, top-right=FL, bottom-left=RR, bottom-right=RL
+    draw_corner_info(ctx, 2, 4, bw, "FR",
+                     s_tire_fr, door_fr, unknown,
+                     GTextAlignmentLeft, font_med, font_sm);
+    draw_corner_info(ctx, w - bw - 2, 4, bw, "FL",
+                     s_tire_fl, door_fl, unknown,
+                     GTextAlignmentRight, font_med, font_sm);
+    draw_corner_info(ctx, 2, h - bh - 4, bw, "RR",
+                     s_tire_rr, door_rr, unknown,
+                     GTextAlignmentLeft, font_med, font_sm);
+    draw_corner_info(ctx, w - bw - 2, h - bh - 4, bw, "RL",
+                     s_tire_rl, door_rl, unknown,
+                     GTextAlignmentRight, font_med, font_sm);
 
-        graphics_context_set_text_color(ctx, TXT_LIGHT);
-        graphics_draw_text(ctx, "Tires (psi)", font_sm,
-                           GRect(10, y, w - 20, 16),
-                           GTextOverflowModeTrailingEllipsis,
-                           GTextAlignmentLeft, NULL);
-        y += 18;
-
-        // 2x2 grid
-        int half = w / 2;
-        snprintf(buf, sizeof(buf), "FL: %d", s_tire_fl);
-        graphics_draw_text(ctx, buf, font_sm, GRect(10, y, half - 10, 16),
-                           GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-        snprintf(buf, sizeof(buf), "FR: %d", s_tire_fr);
-        graphics_draw_text(ctx, buf, font_sm, GRect(half, y, half - 10, 16),
-                           GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-        y += 18;
-        snprintf(buf, sizeof(buf), "RL: %d", s_tire_rl);
-        graphics_draw_text(ctx, buf, font_sm, GRect(10, y, half - 10, 16),
-                           GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-        snprintf(buf, sizeof(buf), "RR: %d", s_tire_rr);
-        graphics_draw_text(ctx, buf, font_sm, GRect(half, y, half - 10, 16),
-                           GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-    }
+    // Maverick overhead silhouette centered on screen
+    draw_maverick_overhead(ctx, cx, cy);
 }
 
 // ── Window lifecycle ──────────────────────────────────────────────────────────
