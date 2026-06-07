@@ -203,8 +203,8 @@ static void send_climate() {
 }
 
 // ── Hold / progress ───────────────────────────────────────────────────────────
-static void fire_held_action() {
-    switch (s_held_btn) {
+static void fire_held_action(int btn) {
+    switch (btn) {
         case BTN_LOCK_UNLOCK:
             send_action(s_is_locked ? ACTION_UNLOCK : ACTION_LOCK);
             break;
@@ -229,7 +229,7 @@ static void progress_tick(void *data) {
         if (fired_btn == BTN_CLIMATE) {
             window_stack_push(s_climate_window, true);
         } else {
-            fire_held_action();
+            fire_held_action(fired_btn);
         }
         return;
     }
