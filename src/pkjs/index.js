@@ -1,8 +1,8 @@
 // Ford Control — PebbleKit JS
 // Bridges watch AppMessage <-> Ford Control server on Render
 
-var SERVER_URL = 'https://ford-control-server.onrender.com';  // Update after Render deploy
-var API_KEY    = 'changeme';  // Must match FORD_API_KEY env var on server
+var SERVER_URL = 'https://ford-control.onrender.com';
+var API_KEY    = 'MyMaverick';
 
 var KEY_ACTION          = 0;
 var KEY_RESPONSE        = 1;
